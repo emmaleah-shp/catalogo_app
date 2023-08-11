@@ -1,0 +1,233 @@
+---
+title: "`r titulo`"
+date: "`r format(Sys.time(), '%d %B, %Y')`"
+site: bookdown::bookdown_site
+output: 
+  html_document:
+    toc: false
+    lib_dir: "~/OCUC/PROYECTOS/catalogo_book/_book/_book/libs"
+    keep_md: true
+header-includes:
+  \usepackage{fontspec, fancyhdr, booktabs}
+mainfont: Arial
+params:
+  title: titulo
+  titulo_capa: titulo_capa 
+  amb_title: amb_title
+  show_code: yes
+---
+
+```{r setup-capa, include=FALSE}
+pacman::p_load(tidyselect, tidyverse, dplyr, glue, knitr, stringr, magrittr, sf, ggmap, ggplot2, flextable, data.table, sp, scales, devtools, tinytex, writexl, webshot, readr)
+library(rmarkdown)
+library(pdftools)
+library(webshot)
+# md_document
+knitr::opts_chunk$set(echo = TRUE, ft.tabcolsep=0)
+flextable::use_df_printer()
+options(cli.num_colors = 1)
+path<-"D:/capas_catalogo_datamet/catalogo_v4.gdb"
+detalle <- combinacion %>% filter(nombre_capa==str_glue("{titulo_capa}"))
+descripcion<- as.character(detalle[1,10])
+```
+
+# {-}
+**Ámbito `r amb_title`**
+
+## **Descripción** {-}
+`r descripcion`
+Cada fila es/son `r as.character(detalle$dato)`. 
+```{r detalle, echo=FALSE, warning=FALSE, out.width='50%', fig.asp=.75, fig.align='center'}
+library(gt)
+masinfo<-detalle[,c(9,12:20)]
+masinfo |>
+  gt() |>
+  tab_header(
+    title = glue::glue("{titulo_capa}"),
+    subtitle = glue::glue("Ámbito {amb_title}, Grupo {detalle$grupo}")
+  ) |>
+  cols_width(everything() ~ px(100)) |>
+  tab_style(
+    style = cell_fill(color = "lightblue"),
+    locations = cells_body(columns = calidad)) |>
+  tab_style(
+    style = cell_text(size = px(12)),
+    locations = cells_body(
+      columns = everything()))
+```
+Link: `r as.character(detalle$link)`
+
+## **Informe** {-}
+
+Este es un informe sobre *`r titulo_capa`* que incluye un *analisis de completitud de fichas, numero do observaciones unicos, y un extento*.
+
+```{r leer-shp, include=FALSE}
+require(sf)
+capa<-sf::st_read(path, layer=str_glue("{titulo_capa}"))
+obs<- dim(capa)
+masinfo<-detalle[,c(4:9,12:22)]
+```
+
+Hay **`r obs[1]` observaciones** y **`r obs[2]` variables** .
+
+\par
+
+## Diagnosis: {-}
+
+```{r diagnosing, echo=FALSE, warning=FALSE, out.width='70%', fig.asp=.50, fig.align='center'}
+library(dplyr)
+require(knitr)
+library(flextable)
+library(magrittr)
+library(gt)
+
+capa_diagnosis<-diagnosticar(capa)
+
+names(capa_diagnosis)[1]<-"nombre_columna"
+capa_diagnosis<-tibble(capa_diagnosis)
+
+capa_diagnosis |>
+  gt() |>
+  cols_width(everything() ~ px(80)) |>
+  tab_style(
+    style = cell_fill(color = "gray95"),
+    locations = cells_body(columns = nombre_columna)) |>
+  tab_style(
+    style = cell_fill(color = "gray95"),
+    locations = cells_body(columns = nombre_columna)) |>
+  tab_style(
+    style = cell_text(size = px(12)),
+    locations = cells_body(
+      columns = everything())) |>
+  data_color(
+    columns = pc_completo,
+    direction = "column",
+    method = "numeric",
+    palette = "ggsci::red_material", 
+    domain= c(0,99), 
+    na_color = "white") |> 
+  data_color(
+    columns = pc_repetido,
+    direction = "column",
+    method = "numeric",
+    palette = c("lightyellow", "lightblue")) |> 
+  opt_interactive(use_text_wrapping = FALSE, use_resizers = TRUE, use_highlight = TRUE,
+                  use_compact_mode = TRUE, page_size_default = 20)
+
+```
+```{r plotting1, echo = FALSE, include=FALSE}
+library(sf)
+library(ggplot2)
+library(tmap)
+library(ggmap)
+
+ex <- st_bbox(capa)
+ex<-st_as_sfc(ex)%>%
+  st_as_sf()
+exx<-sf::st_transform(ex, 4326)
+st_crs(exx) <- 4326
+exy <- st_bbox(exx)
+left<- as.double(exy[1])
+bottom<- as.double(exy[2])
+right<-as.double(exy[3])
+top<-as.double(exy[4])
+```
+
+
+```{r plotting2, echo = FALSE}
+library(sf)
+library(leaflet)
+library(mapview)
+library(webshot) 
+library(htmlwidgets)
+geometry_type<-st_geometry_type(capa[1,])
+is_polygon <- (geometry_type == "POLYGON" | geometry_type == "MULTIPOLYGON" )
+is_point <- (geometry_type == "POINT" | geometry_type == "MULTIPOINT" )
+is_line <- (geometry_type == "LINESTRING" | geometry_type == "MULTILINESTRING" )
+type<- c(is_polygon, is_point, is_line)
+repro<-sf::st_transform(capa, 4326)
+st_crs(repro) <- 4326
+
+m <-leaflet() %>% addTiles() %>%
+  addRectangles(
+    lng1=left, lat1=top,
+    lng2=right, lat2=bottom,
+    color="#03F",
+    fillColor = "transparent", 
+    highlightOptions = highlightOptions(color = "white", weight = 2,
+      bringToFront = TRUE)
+  ) 
+
+if(type[1]==TRUE){
+  m <- m %>% addPolygons(
+  data = repro,  
+  fillColor = "blue",  
+  color = "black",  
+  weight = 1,  
+  opacity = 1.0, 
+  fillOpacity = 0.5, 
+  highlightOptions = highlightOptions(color = "white", weight = 2,
+      bringToFront = TRUE))
+} else if (type[2] == TRUE) {
+  m <- m %>% addCircles(
+  data = repro,  
+  radius = 10,
+  fillColor = "blue", 
+  color = "black", 
+  weight = 1, 
+  opacity = 0.5)
+} else if (type[3] == TRUE) {
+  m <- m %>% addPolylines(
+  data = repro,
+  fillColor = "blue", 
+  color = "black", 
+  weight = 1, 
+  opacity = 1, 
+  highlightOptions = highlightOptions(color = "white", weight = 2,
+      bringToFront = TRUE))
+}
+
+```
+
+```{r printing-map, echo = FALSE}
+# mapshot(m, file =  glue("images/{titulo_capa}_plot.png"))
+# knitr::include_graphics( glue("images/{titulo_capa}_plot.png"))
+m
+```
+
+```{r kable-head, echo = FALSE}
+library(gt)
+cn<-capa %>% st_drop_geometry() %>% tibble()
+
+if(nrow(cn)>30){
+  cn<-cn[1:30,]
+}
+
+cn |>
+gt() |>
+  fmt_integer() |>
+  cols_width( 
+    everything() ~ px(100)) |>
+  tab_style(
+    style = cell_text(size = px(12)),
+    locations = cells_body(
+      columns = everything()))  |>
+  # tab_style(
+  #   style = cell_text(size = px(12)),
+  #   locations = cells_column_labels(
+  #     columns=everything()
+  #   )) |>
+  tab_header(
+    title = "Muestra de los datos",
+    subtitle = str_glue("Ámbito: {amb_title}")
+  ) |>
+  opt_interactive(use_text_wrapping = FALSE, use_resizers = TRUE, use_highlight = TRUE,
+                  use_compact_mode = TRUE, page_size_default = 15)
+
+```
+*°Sólo muestra hasta 30 observaciones*
+\par
+
+```{r garbage, echo = FALSE, include=FALSE}
+rm(capa, cn, exx, ex, left, top, bottom, right, capa_diagnosis, capa, obs)
+```
